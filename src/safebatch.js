@@ -3,6 +3,9 @@
 // Licensed under the terms of the MIT license
 
 const ethers = require('ethers');
+//import fetch from 'node-fetch';
+//const fetch = require('node-fetch').default;
+const https = require('https');
 const csv = require('csv-parser');
 const fs = require('fs');
 const multi = require('@0x0proxy/multi');
@@ -11,467 +14,250 @@ const multi = require('@0x0proxy/multi');
 require('dotenv').config({path: '.env.local'})
 
 // Config
-const alchemyApiKey = process.env.ALCHEMY_API_KEY;
-const safeAddress = process.env.SAFE_ADDRESS;
+const network = process.env.NETWORK.toLowerCase();
+const alchemyUrl = process.env[`${network.toUpperCase()}_API_URL`];
+const safeAddress = process.env[`SAFE_ADDRESS_${network.toUpperCase()}`];
 
-const alchemyUrl = `https://eth-mainnet.alchemyapi.io/v2/${alchemyApiKey}`;
-const provider = new ethers.providers.JsonRpcProvider(alchemyUrl);
+const signer = {
+    address: process.env.SIGNER_ADDRESS, 
+    privateKey: process.env.SIGNER_PRIVATE_KEY 
+};
 
+const provider = new ethers.JsonRpcProvider(alchemyUrl);
 // This is the full ERC20 ABI, which is overkill.
-const ERC20_ABI = [
-  {
-    "constant": true,
-    "inputs": [],
-    "name": "name",
-    "outputs": [
-      {
-        "name": "",
-        "type": "string"
-      }
-    ],
-    "payable": false,
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "constant": false,
-    "inputs": [
-      {
-        "name": "_spender",
-        "type": "address"
-      },
-      {
-        "name": "_value",
-        "type": "uint256"
-      }
-    ],
-    "name": "approve",
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool"
-      }
-    ],
-    "payable": false,
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "constant": true,
-    "inputs": [],
-    "name": "totalSupply",
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "payable": false,
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "constant": false,
-    "inputs": [
-      {
-        "name": "_from",
-        "type": "address"
-      },
-      {
-        "name": "_to",
-        "type": "address"
-      },
-      {
-        "name": "_value",
-        "type": "uint256"
-      }
-    ],
-    "name": "transferFrom",
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool"
-      }
-    ],
-    "payable": false,
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "constant": true,
-    "inputs": [],
-    "name": "decimals",
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint8"
-      }
-    ],
-    "payable": false,
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "constant": true,
-    "inputs": [
-      {
-        "name": "_owner",
-        "type": "address"
-      }
-    ],
-    "name": "balanceOf",
-    "outputs": [
-      {
-        "name": "balance",
-        "type": "uint256"
-      }
-    ],
-    "payable": false,
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "constant": true,
-    "inputs": [],
-    "name": "symbol",
-    "outputs": [
-      {
-        "name": "",
-        "type": "string"
-      }
-    ],
-    "payable": false,
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "constant": false,
-    "inputs": [
-      {
-        "name": "_to",
-        "type": "address"
-      },
-      {
-        "name": "_value",
-        "type": "uint256"
-      }
-    ],
-    "name": "transfer",
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool"
-      }
-    ],
-    "payable": false,
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "constant": true,
-    "inputs": [
-      {
-        "name": "_owner",
-        "type": "address"
-      },
-      {
-        "name": "_spender",
-        "type": "address"
-      }
-    ],
-    "name": "allowance",
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "payable": false,
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "payable": true,
-    "stateMutability": "payable",
-    "type": "fallback"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "name": "owner",
-        "type": "address"
-      },
-      {
-        "indexed": true,
-        "name": "spender",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "name": "value",
-        "type": "uint256"
-      }
-    ],
-    "name": "Approval",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "name": "from",
-        "type": "address"
-      },
-      {
-        "indexed": true,
-        "name": "to",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "name": "value",
-        "type": "uint256"
-      }
-    ],
-    "name": "Transfer",
-    "type": "event"
-  }
-]
+const ERC20_ABI = multi.readjson('src/erc20abi.json');
 
 // subset of the Gnosis Safe ABI used in this code
-const SAFE_ABI = [
-  {
-    "constant": true, 
-    "inputs": [], 
-    "name": "getOwners",
-    "outputs": [
-      {
-        "name": "",
-        "type": "address[]"
-      }
-    ],
-    "payable": false, 
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "constant": true,
-    "inputs": [],
-    "name": "nonce", 
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "payable": false,  
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "constant": false,
-    "inputs": [
-      {
-        "name": "to",
-        "type": "address"
-      },
-      {
-        "name": "value",
-        "type": "uint256"
-      },
-      {
-        "name": "data",
-        "type": "bytes"
-      },
-      {
-        "name": "operation",
-        "type": "uint256"
-      },
-      {
-        "name": "safeTxGas",
-        "type": "uint256"
-      },
-      {
-        "name": "baseGas",
-        "type": "uint256"
-      },
-      {
-        "name": "gasPrice",
-        "type": "uint256"
-      },
-      {
-        "name": "gasToken",
-        "type": "address"
-      },
-      {
-        "name": "refundReceiver",
-        "type": "address"
-      },
-      {
-        "name": "signatures",
-        "type": "bytes"
-      }  
-    ],
-    "name": "execTransaction",
-    "outputs": [
-      {
-        "name": "success",
-        "type": "bool"
-      }
-    ],
-    "payable": false,
-    "stateMutability": "nonpayable",
-    "type": "function"
-  }
-]
+const SAFE_ABI = multi.readjson('src/safeABI.json');
+      
+async function getGasPrices() {
+
+    const url = 'https://gasstation-mainnet.matic.network';
+  
+    const request = https.get(url, response => {
+	let data = '';
+	
+	response.on('data', chunk => {
+	    data += chunk; 
+	});
+	
+	response.on('end', () => {
+	    const prices = JSON.parse(data);
+	    console.log(prices);
+	    return prices;
+	});
+	
+    });
+
+    request.end();
+    
+}
+
+// async function getGasPrices() {
+
+//   const response = await fetch('https://gasstation-mainnet.matic.network');
+//   const data = await response.json();
+
+//   return {
+//     fast: data.fast, // Gwei
+//     standard: data.standard,
+//     slow: data.slow
+//   }
+
+// }
+
 
 async function loadTransfersCSV() {
 
   const transfers = [];
 
   return new Promise((resolve, reject) => {
-    fs.createReadStream('transfers.csv')
-      .pipe(csv())
-      .on('data', (data) => {
-        transfers.push({
-          token: data.token,
-          to: data.to,
-          // Convert ETH amount to wei 
-          amount: ethers.utils.parseEther(data.amount) 
-        });
-      })
-      .on('end', () => {
-        resolve(transfers);
-      });
+      fs.createReadStream('transfers.csv')
+	  .on('error', (err) => {
+	      multi.redlog(`got error ${err} trying to read CSV file`);
+	      process.exit(1);
+	  })
+	  .pipe(csv())
+	  .on('data', (row) => {
+	      console.log(row);
+              transfers.push({
+		  token: row.TOKEN.trim(),
+		  to: row.TO.trim(),
+		  // Convert ETH amount to wei 
+		  amount: ethers.parseEther(row.AMOUNT.trim()) 
+              });
+	  })
+	  .on('end', () => {
+              resolve(transfers);
+	  });
   });
 }
 
-async function generateTransferTx(transfer, signer) {
-  const [tokenAddress, to, amountWei] = transfer;
+async function generateTransferTx(transfer, signer,nonce) {
+    const [tokenAddress, to, amountWei] = [transfer.token,transfer.to,transfer.amount];
 
-  const tokenContract = new ethers.Contract(tokenAddress, ERC20ABI, provider);
+    const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
 
-  const data = tokenContract.interface.encodeFunctionData('transfer', [
-    to, 
-    ethers.utils.parseEther(amountWei) 
-  ]);
+    const data = tokenContract.interface.encodeFunctionData('transfer', [
+	to, 
+	amountWei
+    ]);
 
-  const tx = {
-    to: tokenAddress,
-    value: 0,
-    data: data,
-    operation: 0,
-    safeTxGas: 0,
-    baseGas: 0,
-    gasPrice: 0,
-    gasToken: '0x0000000000000000000000000000000000000000',
-    refundReceiver: '0x0000000000000000000000000000000000000000',
-    nonce: await safe.nonce() 
-  };
-  
-  // Set "from" as current signer
-  tx.from = signer.address;
+    multi.bluelog(`genTX: ${JSON.stringify(data)}`);
 
-  return tx;
+    const tx = {
+	to: tokenAddress,
+	value: 0,
+	data: data,
+	operation: 0,
+	safeTxGas: 0,
+	baseGas: 0,
+	gasPrice: 0,
+	gasToken: '0x0000000000000000000000000000000000000000',
+	refundReceiver: '0x0000000000000000000000000000000000000000',
+	nonce: nonce
+    };
+    
+    // Set "from" as current signer
+    tx.from = signer.address;
+    
+    return tx;
 }
 
 async function signTransaction(tx, privateKey) {
 
-  // Create wallet instance from private key
-  const wallet = new ethers.Wallet(privateKey);
+    // Create wallet instance from private key
+    const wallet = new ethers.Wallet(privateKey, provider);
 
-  // Sign transaction
-  const signedTx = await wallet.signTransaction(tx);
-
-  // Extract signature
-  const signature = ethers.utils.splitSignature(signedTx.rawSignature);
-
-  return signature;
+    // Sign transaction
+    const signedTx = await wallet.signTransaction(tx);
+    multi.amberlog(`signedTx: ${signedTx}`);
+    // Extract signature
+    //const signature = ethers.splitSignature(signedTx.rawSignature);
+    //const signature = signedTx.signature;
+    const signature = signedTx;
+    
+    return signature;
 }
 
-async function submitSignatures(proposedTxs, signatures) {
+async function submitSignatures(hotSafe, proposedTxs, signatures,gasPrice) {
 
-  // Create Safe contract instance
-  const safe = new ethers.Contract(safeAddress, safeABI, provider);
+    const safe = new ethers.Contract(safeAddress, SAFE_ABI, provider);
+    // hotSafe is a signer-enabled instance of the SAFE contract
+    
+    // Submit each signature
+    for(let i=0; i<proposedTxs.length; i++) {
 
-  // Submit each signature
-  for(let i=0; i<proposedTxs.length; i++) {
+	const tx = proposedTxs[i];
+	const sig = signatures[i];
+	
 
-    const tx = proposedTxs[i];
-    const sigs = signatures[i];
+	// Estimate gas
+	//multi.amberlog('calling gasEstimate method');
+	//const gasEstimate = await hotSafe.requiredTxGas(
+	//    tx.to, 
+	//    tx.value,
+	//    tx.data,
+	//    tx.operation);
 
-    // Estimate gas 
-    const gasEstimate = await safe.estimateGas.execTransaction(
-      tx.to, 
-      tx.value,
-      tx.data,
-      tx.operation,
-      tx.safeTxGas,
-      tx.baseGas,
-      tx.gasPrice,
-      tx.gasToken,
-      tx.refundReceiver,
-      sigs
-    );
-
-    // Submit signature
-    const txResponse = await safe.execTransaction(
-      tx.to,
-      tx.value,
-      tx.data,  
-      tx.operation,
-      tx.safeTxGas,
-      tx.baseGas,
-      tx.gasPrice,
-      tx.gasToken,
-      tx.refundReceiver,
-      sigs,
-      {gasLimit: gasEstimate} 
-    );
-
-    console.log(`Submitted sig for tx${i}: ${txResponse.hash}`);
-  }
+	const gasEstimate = 40000
+	multi.amberlog(`gas estimate: ${gasEstimate}`);
+	// Submit signature
+	const txResponse = await hotSafe.execTransaction(
+	    tx.to,
+	    tx.value,
+	    tx.data,  
+	    tx.operation,
+	    gasEstimate,
+	    gasEstimate,
+	    0,
+	    '0x0000000000000000000000000000000000000000',
+	    signer.address,
+	    sig,
+	    {gasLimit: gasEstimate} 
+	);
+	
+	console.log(`Submitted sig for tx${i}: ${txResponse.hash}`);
+    }
 }
 
 async function main() {
-    const safe = new ethers.Contract(safeAddress, safeABI, provider);
+    multi.greenlog("***************************************************************");
+    multi.greenlog("  safebatch.js — process a series of GNOSIS Safe transactions");
+    multi.greenlog("**************************************************************");
+
+    if (network == undefined) {
+	console.log(multi.amber('no network set') +
+		    ': please set evironment variable NETWORK before running');
+	process.exit(1);
+    }
+    // Signer info
+
+    if (signer.address == undefined || signer.privateKey == undefined) {
+	console.log(multi.amber('bad signer information') +
+		    ': please set evironment variables SIGNER_ADDRESS and SIGNER_PRIVATE_KEY before running');
+	process.exit(1);
+    }
+
+    multi.bluelog(`network: ${network}`);
+    multi.bluelog(`signer address: ${signer.address}`);
+    multi.bluelog(`safe address: ${safeAddress}`);
+    
+    //const safe = new ethers.Contract(safeAddress, SAFE_ABI, provider);
+    const sgnr = new ethers.Wallet(signer.privateKey, provider);
+    const safe = new ethers.Contract(safeAddress, SAFE_ABI, sgnr);
 
     // Get list of owners
+    console.log('getting owners of SAFE');
     const owners = await safe.getOwners();
-
+    for (let i=0; i < owners.length; i++) {
+	console.log(`==> owner ${i}: ${multi.green(owners[i])}`);
+    }
     // Load and parse CSV
 
+    console.log('loading CSV');
     const transfers = await loadTransfersCSV(); 
-
+    console.log(` ==> loaded ${transfers.length} token transfers`);
+    for (let i=0; i < transfers.length; i++) {
+	let t=transfers[i];
+	console.log(`==> ==> ${multi.amber(i)}: ${t.token} ${t.to} ${t.amount}`);
+    }
     // Generate proposed transactions
+    console.log('generating proposed transactions');
     const proposedTxs = [];
     for(let transfer of transfers) {
-	const tx = await generateTransferTx(transfer, signer);
+	const nonce = await safe.nonce();
+	const tx = await generateTransferTx(transfer, signer, nonce);
+	multi.amberlog(`tx data: ${JSON.stringify(tx.data)}`);
 	proposedTxs.push(tx); 
     }
 
-    // Signer info
-    const signer = {
-	address: process.env.SIGNER_ADDRESS, 
-	privateKey: process.env.SIGNER_PRIVATE_KEY 
-    };
-
-
+    console.log('signing transactions');
     // Sign transactions 
     const signatures = [];
     for(let tx of proposedTxs) {
 	// Sign with current signer
 	const signature = await signTransaction(tx, signer.privateKey);
+	multi.amberlog(`signature: ${JSON.stringify(signature)}`);
 	signatures.push(signature);
     }
 
+    console.log('looking up gas price');
+    
+    const prices = 0.075;
+    
+    console.log('got prices: ' + prices);
 
+    const gasPrice =  prices.fast * 1000000000 // convert Gwei to Wei
+
+    console.log('sending signed transactions to SAFE');
     // Send signatures to relayer/Safe
-    await submitSignatures(proposedTxs, signatures);
+    // const sgnr = new ethers.Wallet(signer.privateKey, provider);
+    const hotSafe = new ethers.Contract(safeAddress, SAFE_ABI, sgnr);
 
+    await submitSignatures(hotSafe,proposedTxs, signatures,gasPrice);
+
+    multi.greenlog('done');
 }
 
 main()

@@ -131,3 +131,6 @@ dist
 
 # ignore secrets
 .env.local
+
+#ignore emacs log files
+*~

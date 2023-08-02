@@ -37,5 +37,8 @@ seperately approved by Gnosis Safe signers. The workflow is as follows:
 This code requires node.js, ethers, and an Alchemy API key.
 
 	npm install ethers
+	npm install csv-parser
+	npm install node-fetch
 	npm install dotenv
-	 
+	npm install @0x0proxy/multi
+	npm install alchemy-sdk
